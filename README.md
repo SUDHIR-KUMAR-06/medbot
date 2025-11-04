@@ -48,7 +48,3 @@ streamlit run app.py
 Feel free to fork, open issues, or submit pull requests.
 If you're interested in Generative AI or Healthcare AI, let's connect!
 
-## 🙋‍♂️ About Me
-- Rohit Kumar Sahu
-- 👨‍🎓 M.Tech CSE @ NIT Durgapur
-- 📬 rrohitkumarsahu2002@gmail.com
