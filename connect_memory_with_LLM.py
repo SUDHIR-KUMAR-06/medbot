@@ -1,61 +1,85 @@
 import os
+from dotenv import load_dotenv
+
 from langchain_core.prompts import PromptTemplate
-from langchain.chains import RetrievalQA
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
 from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 
-from dotenv import load_dotenv
 load_dotenv()
-#step 1 - Setup LLM model 
 
-GROQ_API_KEY =os.environ.get("GROQ_API_KEY")
-repo_id = "llama-3.1-8b-instant"
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+REPO_ID = "llama-3.1-8b-instant"
+DB_FAISS_PATH = "vectorstore/db_faiss"
 
-def load_llm(repo_id):
-    llm = ChatGroq(
-        model = repo_id,
+
+def load_llm():
+    return ChatGroq(
+        model=REPO_ID,
         temperature=0.5,
         max_retries=2,
     )
-    return llm
 
-#step 2 - Connect with FAISS
 
-DB_FAISS_PATH = "vectorstore/db_faiss"
+CUSTOM_PROMPT_TEMPLATE = """
+Use the pieces of information provided in the context to answer the user's question.
+If you don't know the answer, say you don't know. Do not make up information.
 
-custom_prompt_template = """
-Use the peices of information provided in the context to answer user's question.
-If you dont know the answer, just say that you dint know, dont try to make up an answer.
+Context:
+{context}
 
-context : {context}
-Question : {question}
+Question:
+{question}
 
-Start the Answer directly no small talks. 
+Start the answer directly without small talk.
 """
-def set_custom_template(custom_prompt_template):
-    prompt = PromptTemplate(
-        template = custom_prompt_template,
-        input_variables=['context','question']
+
+
+def get_prompt():
+    return PromptTemplate(
+        template=CUSTOM_PROMPT_TEMPLATE,
+        input_variables=["context", "question"],
     )
-    return prompt
 
-embedding_model = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')
-db = FAISS.load_local(DB_FAISS_PATH ,embedding_model,allow_dangerous_deserialization=True)
 
-#step 3 - Create Chain
+def main():
+    embedding_model = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
 
-qa_chain = RetrievalQA.from_chain_type(
-    llm = load_llm(repo_id),
-    chain_type="stuff",
-    retriever = db.as_retriever(search_kwargs = {'k':3}), #search_kwargs is the number of chunks the llm will search for a question .... in this case only top 3 chunks that has the information will be searched
-    return_source_documents=True,
-    chain_type_kwargs={'prompt': set_custom_template(custom_prompt_template)}
-)
+    db = FAISS.load_local(
+        DB_FAISS_PATH,
+        embedding_model,
+        allow_dangerous_deserialization=True,
+    )
 
-user_query = input("write query here")
+    retriever = db.as_retriever(search_kwargs={"k": 3})
 
-response = qa_chain.invoke({'query':user_query})
+    rag_chain = (
+        {
+            "context": retriever,
+            "question": RunnablePassthrough(),
+        }
+        | get_prompt()
+        | load_llm()
+        | StrOutputParser()
+    )
 
-print("RESULT: ", response['result'])
-print("SOURCE_DOCUMENTS: ", response['source_documents'])
+    user_query = input("Write query here: ")
+
+    result = rag_chain.invoke(user_query)
+    source_docs = retriever.get_relevant_documents(user_query)
+
+    print("\nRESULT:\n", result)
+    print("\nSOURCE DOCUMENTS:")
+    for i, doc in enumerate(source_docs, 1):
+        metadata = doc.metadata
+        page = metadata.get("page_label", metadata.get("page", "Unknown"))
+        source = metadata.get("source", "Unknown").split("\\")[-1]
+        print(f"{i}. {source} (Page {page})")
+
+
+if __name__ == "__main__":
+    main()
